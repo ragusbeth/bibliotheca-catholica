@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const multer = require('multer');
 const path = require('path');
+const { parseFile } = require('./textParser');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -170,12 +171,28 @@ app.get('/api/books', authMiddleware, async (req, res) => {
 app.post('/api/books', authMiddleware, async (req, res) => {
   const { name, category, icon, chapters, content, format, has_footnotes, has_margin_refs, is_shared } = req.body;
   if (!name) return res.status(400).json({ error: 'Nombre requerido' });
+
+  let finalContent = content || '';
+  let finalChapters = chapters;
+  let finalHasFootnotes = has_footnotes;
+
+  // Si viene texto plano, estructurarlo
+  if (content && (!chapters || chapters.length <= 1)) {
+    try {
+      const buf = Buffer.from(content, 'utf-8');
+      const parsed = await parseFile(buf, 'texto.txt');
+      finalContent = JSON.stringify(parsed.chapters);
+      finalChapters = parsed.chapterTitles;
+      finalHasFootnotes = parsed.hasFootnotes;
+    } catch {}
+  }
+
   const result = await pool.query(
     `INSERT INTO books (user_id, name, category, icon, chapters, content, format, has_footnotes, has_margin_refs, is_shared)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
     [req.user.id, name, category || 'Otro', icon || '📄',
-     chapters || ['Capítulo 1'], content || '', format || 'txt',
-     has_footnotes || false, has_margin_refs || false, is_shared || false]
+     finalChapters || ['Capítulo 1'], finalContent, format || 'txt',
+     finalHasFootnotes || false, has_margin_refs || false, is_shared || false]
   );
   res.json(result.rows[0]);
 });
@@ -184,19 +201,33 @@ app.post('/api/books/upload', authMiddleware, upload.single('file'), async (req,
   const file = req.file;
   const { name, category } = req.body;
   if (!file) return res.status(400).json({ error: 'No se recibió archivo' });
+
   const format = path.extname(file.originalname).toLowerCase().replace('.', '');
-  let content = '';
-  if (['txt', 'csv', 'md'].includes(format)) {
-    content = file.buffer.toString('utf-8');
-  } else {
-    content = `[Archivo ${format.toUpperCase()} cargado: ${file.originalname}. Procesamiento de ${format} disponible con librerías adicionales.]`;
+
+  let parsed;
+  try {
+    parsed = await parseFile(file.buffer, file.originalname);
+  } catch (err) {
+    return res.status(422).json({ error: err.message });
   }
-  const hasFootnotes = content.includes('*');
+
+  // Guardamos la estructura completa como JSON en el campo content
+  const contentJson = JSON.stringify(parsed.chapters);
+  const chapterTitles = parsed.chapterTitles;
+
   const result = await pool.query(
     `INSERT INTO books (user_id, name, category, icon, chapters, content, format, has_footnotes)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [req.user.id, name || file.originalname, category || 'Otro', '📄',
-     ['Capítulo 1'], content, format, hasFootnotes]
+    [
+      req.user.id,
+      name || file.originalname.replace(/\.[^.]+$/, ''),
+      category || 'Otro',
+      '📄',
+      chapterTitles,
+      contentJson,
+      format,
+      parsed.hasFootnotes,
+    ]
   );
   res.json(result.rows[0]);
 });

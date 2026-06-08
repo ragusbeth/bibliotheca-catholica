@@ -140,47 +140,53 @@ function AddBookModal({ onClose, onAdd }) {
   const [dragging, setDragging] = useState(false);
   const [msg, setMsg] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState('');
   const fileRef = useRef();
 
   function handle(e) { setForm(f => ({ ...f, [e.target.name]: e.target.value })); }
 
   async function handleFile(f) {
     setFile(f);
-    if (['txt', 'csv', 'md'].includes(f.name.split('.').pop().toLowerCase())) {
-      const text = await f.text();
-      setForm(prev => ({ ...prev, text: text.slice(0, 200), name: prev.name || f.name.replace(/\.[^.]+$/, '') }));
-    } else {
-      setForm(prev => ({ ...prev, name: prev.name || f.name.replace(/\.[^.]+$/, '') }));
-    }
+    setForm(prev => ({ ...prev, name: prev.name || f.name.replace(/\.[^.]+$/, '') }));
+    setMsg({ t: 'info', m: `📄 ${f.name} (${(f.size/1024).toFixed(0)} KB) — listo para cargar` });
   }
 
   async function doAdd() {
-    if (!form.name) { setMsg('Ingrese el nombre del libro'); return; }
-    setLoading(true);
+    if (!form.name) { setMsg({ t: 'error', m: 'Ingrese el nombre del libro' }); return; }
+    if (!file && !form.text.trim()) { setMsg({ t: 'error', m: 'Suba un archivo o ingrese texto directamente' }); return; }
+    setLoading(true); setMsg(null);
     try {
       let book;
       if (file) {
+        setProgress('Enviando archivo al servidor...');
         book = await api.uploadBook(file, form.name, form.cat);
-      } else if (form.text) {
-        book = await api.createBook({ name: form.name, category: form.cat, content: form.text, has_footnotes: form.text.includes('*'), chapters: ['Capítulo 1'] });
       } else {
-        setMsg('Suba un archivo o ingrese texto'); setLoading(false); return;
+        setProgress('Estructurando el texto...');
+        book = await api.createBook({ name: form.name, category: form.cat, content: form.text, has_footnotes: form.text.includes('*'), chapters: ['Capítulo 1'] });
       }
-      onAdd({ ...book, id: `db_${book.id}`, cat: book.category, dbId: book.id, icon: '📄', chapters: book.chapters || ['Capítulo 1'], hasFootnotes: book.has_footnotes, hasMarginRefs: false });
-    } catch (err) { setMsg(err.message); }
+      setProgress('');
+      onAdd({
+        ...book, id: `db_${book.id}`, dbId: book.id,
+        cat: book.category, icon: '📄',
+        chapters: book.chapters?.length ? book.chapters : ['Capítulo 1'],
+        hasFootnotes: book.has_footnotes, hasMarginRefs: false,
+      });
+    } catch (err) { setMsg({ t: 'error', m: err.message }); setProgress(''); }
     setLoading(false);
   }
 
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget && !loading) onClose(); }}>
       <div className="modal-box">
         <div className="modal-title">Incorporar nuevo texto</div>
-        <button className="modal-close" onClick={onClose}>✕</button>
-        {msg && <div className="msg error">{msg}</div>}
-        <div className="field"><label>Nombre del libro / documento</label><input name="name" value={form.name} onChange={handle} /></div>
+        {!loading && <button className="modal-close" onClick={onClose}>✕</button>}
+        {msg && <div className={'msg ' + msg.t}>{msg.m}</div>}
+        <div className="field"><label>Nombre del libro / documento</label>
+          <input name="name" value={form.name} onChange={handle} disabled={loading} />
+        </div>
         <div className="field">
           <label>Categoría</label>
-          <select name="cat" value={form.cat} onChange={handle}>
+          <select name="cat" value={form.cat} onChange={handle} disabled={loading}>
             <option>Sagrada Escritura</option><option>Magisterio</option>
             <option>Documentos Conciliares</option><option>Encíclicas</option>
             <option>Santos y Doctores</option><option>Liturgia</option><option>Otro</option>
@@ -188,24 +194,35 @@ function AddBookModal({ onClose, onAdd }) {
         </div>
         <div
           className={'upload-zone' + (dragging ? ' drag' : '')}
-          onClick={() => fileRef.current.click()}
-          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onClick={() => !loading && fileRef.current.click()}
+          onDragOver={e => { e.preventDefault(); if (!loading) setDragging(true); }}
           onDragLeave={() => setDragging(false)}
-          onDrop={e => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }}
+          onDrop={e => { e.preventDefault(); setDragging(false); if (!loading && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }}
         >
-          <div className="upload-icon">⬆</div>
-          <p>Arrastre un archivo o haga clic para seleccionar</p>
+          <div className="upload-icon">{file ? '✅' : '⬆'}</div>
+          <p>{file ? file.name : 'Arrastre un archivo o haga clic para seleccionar'}</p>
           <div className="format-badges">
             {['TXT', 'CSV', 'DOCX', 'PDF', 'MD'].map(f => <span key={f} className="format-badge">{f}</span>)}
           </div>
-          <input ref={fileRef} type="file" style={{ display: 'none' }} accept=".txt,.csv,.pdf,.docx,.md" onChange={e => handleFile(e.target.files[0])} />
+          <input ref={fileRef} type="file" style={{ display: 'none' }} accept=".txt,.csv,.pdf,.docx,.md"
+            onChange={e => { if (e.target.files[0]) handleFile(e.target.files[0]); }} />
         </div>
-        {file && <div className="msg info">📄 {file.name} listo</div>}
-        <div className="field" style={{ marginTop: '1rem' }}>
-          <label>O pegue el texto directamente</label>
-          <textarea name="text" value={form.text} onChange={handle} style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--border)', color: 'var(--parch)', padding: '.6rem', fontFamily: "'EB Garamond',serif", fontSize: '.9rem', minHeight: 100, resize: 'vertical', outline: 'none', marginTop: '.4rem' }} placeholder="Use * para notas al pie y [Ref] para citas cruzadas..." />
-        </div>
-        <button className="btn" onClick={doAdd} disabled={loading} style={{ marginTop: '.5rem' }}>{loading ? 'Guardando...' : 'Incorporar a la biblioteca'}</button>
+        {!file && (
+          <div className="field" style={{ marginTop: '1rem' }}>
+            <label>O pegue el texto directamente</label>
+            <textarea name="text" value={form.text} onChange={handle} disabled={loading}
+              style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--border)', color: 'var(--parch)', padding: '.6rem', fontFamily: "'EB Garamond',serif", fontSize: '.9rem', minHeight: 120, resize: 'vertical', outline: 'none', marginTop: '.4rem' }}
+              placeholder="Pegue aquí el texto. Use * para notas al pie y [Ref] para citas." />
+          </div>
+        )}
+        {loading && (
+          <div style={{ textAlign: 'center', padding: '1rem 0', fontFamily: "'Lato',sans-serif", fontSize: '.82rem', color: 'var(--gold-dim)' }}>
+            <span className="loading-dots"><span>.</span><span>.</span><span>.</span></span>{' '}{progress}
+          </div>
+        )}
+        <button className="btn" onClick={doAdd} disabled={loading} style={{ marginTop: '.5rem' }}>
+          {loading ? 'Procesando...' : 'Incorporar a la biblioteca'}
+        </button>
       </div>
     </div>
   );
@@ -319,10 +336,32 @@ function AIPanel({ book, chapter, verse, verseText }) {
 // ─── READER VIEW ──────────────────────────────────────────────────────────────
 function ReaderView({ book, chapter, setChapter, currentVerse, setCurrentVerse, userComments, onComment, user }) {
   const [sidePart, setSidePart] = useState('tree');
-  const verses = SAMPLE_TEXT[book?.id]?.[chapter] || [];
-  const bookContent = book?.userText || book?.content || '';
+  const scrollRef = useRef();
+
+  // ── Resolve verses for the current chapter ────────────────────────────────
+  // Priority: static sample data → parsed structured JSON content → raw text
+  const staticVerses = SAMPLE_TEXT[book?.id]?.[chapter] || [];
+
+  const parsedChapters = useCallback(() => {
+    if (!book?.content) return null;
+    try {
+      const arr = JSON.parse(book.content);
+      if (Array.isArray(arr)) return arr;
+    } catch {}
+    return null;
+  }, [book?.content])();
+
+  const userVerses = useCallback(() => {
+    if (!parsedChapters) return [];
+    const ch = parsedChapters.find(c => c.title === chapter) || parsedChapters[0];
+    return ch?.verses || [];
+  }, [parsedChapters, chapter])();
+
+  const verses = staticVerses.length > 0 ? staticVerses : userVerses;
+  const rawText = (!parsedChapters && book?.content && !staticVerses.length) ? book.content : null;
   const selectedVerse = verses.find(v => v.v === currentVerse);
 
+  // ── Actions ───────────────────────────────────────────────────────────────
   async function clickVerse(v) {
     setCurrentVerse(v.v);
     try { await api.saveProgress({ book_id: book.id, chapter, verse: v.v }); } catch {}
@@ -331,82 +370,124 @@ function ReaderView({ book, chapter, setChapter, currentVerse, setCurrentVerse, 
   async function goToLastPosition() {
     try {
       const p = await api.getProgress(book.id);
-      if (p) { setChapter(p.chapter); setCurrentVerse(p.verse); }
+      if (p?.chapter) { setChapter(p.chapter); setCurrentVerse(p.verse); }
     } catch {}
   }
 
+  function goToVerse() {
+    const ref = prompt('Ir a versículo / párrafo número:');
+    if (ref) { const n = parseInt(ref); if (!isNaN(n)) { setCurrentVerse(n); scrollToVerse(n); } }
+  }
+
+  function scrollToVerse(n) {
+    setTimeout(() => {
+      const el = document.getElementById(`verse-${n}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  }
+
+  // ── Render verse text with footnote marks and cross-refs ──────────────────
   function renderText(text) {
-    return text.split(/(\*|\[[^\]]+\])/).map((part, i) => {
-      if (part === '*') return <sup key={i} className="footnote-mark">*</sup>;
-      if (/^\[[^\]]+\]$/.test(part)) return <sup key={i} className="cross-ref">{part}</sup>;
+    if (!text) return null;
+    return text.split(/(\*|\[[A-Za-z0-9\s,;:.]+\])/).map((part, i) => {
+      if (part === '*') return <sup key={i} className="footnote-mark" title="Ver nota al pie">*</sup>;
+      if (/^\[.+\]$/.test(part)) return <sup key={i} className="cross-ref" title={`Cita: ${part}`}>{part}</sup>;
       return part;
     });
   }
 
+  const chapterOptions = book?.chapters?.length > 0 ? book.chapters
+    : parsedChapters ? parsedChapters.map(c => c.title) : ['Capítulo 1'];
+
   return (
     <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* ── Toolbar ── */}
         <div className="reader-toolbar">
-          <select className="select-sm" value={chapter} onChange={e => { setChapter(e.target.value); setCurrentVerse(null); }}>
-            {book?.chapters?.map(ch => <option key={ch}>{ch}</option>)}
+          <select className="select-sm" value={chapter}
+            onChange={e => { setChapter(e.target.value); setCurrentVerse(null); scrollRef.current?.scrollTo(0,0); }}>
+            {chapterOptions.map(ch => <option key={ch}>{ch}</option>)}
           </select>
-          <button className="tool-btn" onClick={() => { setCurrentVerse(null); }}>⬆ Inicio</button>
+          <button className="tool-btn" onClick={() => { setCurrentVerse(null); scrollRef.current?.scrollTo(0,0); }}>⬆ Inicio</button>
           <button className="tool-btn" onClick={goToLastPosition}>↩ Última posición</button>
-          <button className="tool-btn" onClick={() => {
-            const ref = prompt('Ir a versículo número:');
-            if (ref) { const n = parseInt(ref); if (!isNaN(n)) setCurrentVerse(n); }
-          }}>→ Ir a versículo</button>
+          <button className="tool-btn" onClick={goToVerse}>→ Ir a §</button>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '.3rem' }}>
             <button className={'tool-btn' + (sidePart === 'tree' ? ' active' : '')} onClick={() => setSidePart('tree')}>Citas</button>
-            <button className={'tool-btn' + (sidePart === 'ai' ? ' active' : '')} onClick={() => setSidePart('ai')}>Consulta IA</button>
+            <button className={'tool-btn' + (sidePart === 'ai'   ? ' active' : '')} onClick={() => setSidePart('ai')}>IA</button>
           </div>
         </div>
+
+        {/* ── Main reading area ── */}
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-          <div className="reader-panel">
+          <div className="reader-panel" ref={scrollRef}>
             <div className="book-header">
               <div className="book-title">{book?.name}</div>
               <div className="book-subtitle">{chapter}</div>
             </div>
-            {verses.length > 0 ? (
+
+            {/* Case 1: structured verses (static or parsed) */}
+            {verses.length > 0 && (
               <>
                 {verses.map(v => (
-                  <div key={v.v} className={'verse' + (currentVerse === v.v ? ' highlighted' : '')} onClick={() => clickVerse(v)}>
+                  <div key={v.v} id={`verse-${v.v}`}
+                    className={'verse' + (currentVerse === v.v ? ' highlighted' : '')}
+                    onClick={() => clickVerse(v)}>
                     <span className="verse-num">{v.v}</span>
                     {renderText(v.text)}
-                    {v.refs?.map(r => <sup key={r} className="cross-ref" onClick={e => { e.stopPropagation(); setCurrentVerse(v.v); }}> [{r}]</sup>)}
+                    {v.refs?.map(r =>
+                      <sup key={r} className="cross-ref"
+                        onClick={e => { e.stopPropagation(); setCurrentVerse(v.v); }}> [{r}]</sup>
+                    )}
                   </div>
                 ))}
                 {verses.some(v => v.footnote) && (
                   <div className="footnotes-area">
                     <h4>NOTAS AL PIE</h4>
                     {verses.filter(v => v.footnote).map(v => (
-                      <div key={v.v} className="footnote-item"><strong>* v.{v.v}:</strong> {v.footnote}</div>
+                      <div key={v.v} className="footnote-item">
+                        <strong>* §{v.v}:</strong> {v.footnote}
+                      </div>
                     ))}
                   </div>
                 )}
               </>
-            ) : bookContent ? (
-              <div style={{ lineHeight: 1.9, fontSize: '1.05rem', color: 'var(--parch)', whiteSpace: 'pre-wrap' }}>{bookContent}</div>
-            ) : (
+            )}
+
+            {/* Case 2: raw text fallback */}
+            {verses.length === 0 && rawText && (
+              <div style={{ lineHeight: 1.9, fontSize: '1.05rem', color: 'var(--parch)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {rawText}
+              </div>
+            )}
+
+            {/* Case 3: no content yet */}
+            {verses.length === 0 && !rawText && (
               <div style={{ textAlign: 'center', color: 'var(--parch-dark)', fontFamily: "'Lato',sans-serif", fontSize: '.85rem', lineHeight: 1.8, padding: '2rem 0' }}>
                 <div style={{ fontSize: '1.5rem', marginBottom: '1rem', color: 'var(--border-gold)' }}>📜</div>
-                <p>Capítulo sin texto de muestra.<br />Puede incorporar el texto mediante el botón <strong style={{ color: 'var(--gold-dim)' }}>+ Agregar texto</strong> en la barra lateral.</p>
+                <p>Este capítulo aún no tiene texto.<br />
+                Use <strong style={{ color: 'var(--gold-dim)' }}>+ Agregar texto</strong> en la barra lateral para incorporar el contenido del libro.</p>
               </div>
             )}
           </div>
+
+          {/* Margin references (Biblia de Jerusalén) */}
           {book?.hasMarginRefs && currentVerse && selectedVerse?.refs && (
             <div className="margin-refs">
               <div style={{ fontFamily: "'Cinzel',serif", fontSize: '.65rem', color: 'var(--gold-dim)', letterSpacing: '.1em', marginBottom: '.8rem' }}>CITAS AL MARGEN</div>
               {selectedVerse.refs.map(r => (
                 <div key={r} className="margin-ref-item">
                   <div className="margin-ref-label">{r}</div>
-                  <div style={{ fontSize: '.7rem', color: 'var(--parch-dark)', lineHeight: 1.4 }}>{CROSS_REFS_DB[r]?.text?.slice(0, 60) || 'Ver referencia'}...</div>
+                  <div style={{ fontSize: '.7rem', color: 'var(--parch-dark)', lineHeight: 1.4 }}>
+                    {CROSS_REFS_DB[r]?.text?.slice(0, 60) || 'Ver referencia'}...
+                  </div>
                 </div>
               ))}
             </div>
           )}
         </div>
       </div>
+
+      {/* Side panel */}
       <div style={{ width: 280, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg2)' }}>
         {sidePart === 'tree'
           ? <CitationTree book={book} chapter={chapter} verse={currentVerse} userComments={userComments} onComment={onComment} />
