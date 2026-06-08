@@ -380,18 +380,61 @@ function ReaderView({ book, chapter, setChapter, currentVerse, setCurrentVerse, 
   }
 
   function scrollToVerse(n) {
+    // Buscar el elemento en el panel de lectura y hacer scroll hacia él
     setTimeout(() => {
+      const panel = scrollRef.current;
       const el = document.getElementById(`verse-${n}`);
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 100);
+      if (el && panel) {
+        const elTop = el.offsetTop - panel.offsetTop;
+        panel.scrollTo({ top: elTop - 80, behavior: 'smooth' });
+        setCurrentVerse(n);
+      } else if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setCurrentVerse(n);
+      }
+    }, 80);
   }
 
   // ── Render verse text with footnote marks and cross-refs ──────────────────
   function renderText(text) {
     if (!text) return null;
-    return text.split(/(\*|\[[A-Za-z0-9\s,;:.]+\])/).map((part, i) => {
-      if (part === '*') return <sup key={i} className="footnote-mark" title="Ver nota al pie">*</sup>;
-      if (/^\[.+\]$/.test(part)) return <sup key={i} className="cross-ref" title={`Cita: ${part}`}>{part}</sup>;
+    // Patrones detectados:
+    //   *           → nota al pie
+    //   [§23]       → referencia interna (navega al párrafo 23)
+    //   [Jn 1,1]    → cita externa (abre árbol de citas)
+    return text.split(/(\*|\[§\d+\]|\[[A-Za-z0-9\s,;:.]+\])/).map((part, i) => {
+      // Nota al pie
+      if (part === '*') {
+        return <sup key={i} className="footnote-mark" title="Ver nota al pie">*</sup>;
+      }
+      // Referencia interna [§23] → scroll al párrafo
+      const internalMatch = part.match(/^\[§(\d+)\]$/);
+      if (internalMatch) {
+        const target = parseInt(internalMatch[1]);
+        return (
+          <sup key={i}>
+            <span
+              className="cross-ref internal-ref"
+              title={`Ir al párrafo §${target}`}
+              style={{ cursor: 'pointer', color: '#7ab0d0', textDecoration: 'underline dotted' }}
+              onClick={e => { e.stopPropagation(); scrollToVerse(target); }}
+            >§{target}</span>
+          </sup>
+        );
+      }
+      // Cita externa [Jn 1,1] → selecciona versículo para árbol de citas
+      if (/^\[.+\]$/.test(part)) {
+        return (
+          <sup key={i}>
+            <span
+              className="cross-ref"
+              title={`Cita: ${part.replace(/[\[\]]/g, '')}`}
+              style={{ cursor: 'pointer' }}
+              onClick={e => { e.stopPropagation(); }}
+            >{part}</span>
+          </sup>
+        );
+      }
       return part;
     });
   }
